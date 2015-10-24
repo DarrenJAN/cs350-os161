@@ -9,7 +9,6 @@
 #include <thread.h>
 #include <addrspace.h>
 #include <copyinout.h>
-
   /* this implementation of sys__exit does not do anything with the exit code */
   /* this needs to be fixed to get exit() and waitpid() working properly */
 
@@ -48,7 +47,49 @@ void sys__exit(int exitcode) {
   panic("return from thread_exit in sys_exit\n");
 }
 
+/*
+Fork system call. 
+ctf-> current trap frame
+retval -> child proc PID
+child Prod returns value via enter_forked_process
+*/
 
+int sys_fork(struct trapframe *ctf, pid_t *retval) {
+  struct proc *curProc = curproc;
+  struct proc *newProc = proc_create_runprogram(curProc->p_name);
+
+  if(newProc == NULL) {
+    DEBUG(DB_SYSCALL, "sys_fork_error: Wasn't able to make new process.\n");
+    return ENPROC;
+  }
+  DEBUG(DB_SYSCALL, "sys_fork: New process created.\n");
+
+  as_copy(curproc_getas(), &(newProc->p_addrspace));
+
+  if(newProc->p_addrspace == NULL) {
+    DEBUG(DB_SYSCALL, "sys_fork_error: Couldn't make addrspace for new process.\n");
+    proc_destroy(newProc);
+    return ENOMEM;
+  }
+
+  DEBUG(DB_SYSCALL, "New addrspace created.\n");
+
+  struct trapframe *ntf = kmalloc(sizeof(struct trapframe));
+
+  if (ntf == NULL)
+  {
+    DEBUG(DB_SYSCALL, "sys_fork_error: Couldn't create trapframe for new process.\n");
+    proc_destroy(newProc);
+    return ENOMEM;
+  }
+
+  memcpy(ntf,ctf, sizeof(trapframe));
+  DEBUG(DB_SYSCALL, "sys_fork: Created new trap frame\n");
+  //still to add the child to parent
+
+  *retval = newProc->pid;
+  return 0;
+}
 /* stub handler for getpid() system call                */
 int
 sys_getpid(pid_t *retval)

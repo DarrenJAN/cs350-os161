@@ -35,7 +35,7 @@
 #include <thread.h>
 #include <current.h>
 #include <syscall.h>
-
+#include "opt-A2.h" 
 
 /*
  * System call dispatcher.
@@ -115,6 +115,12 @@ syscall(struct trapframe *tf)
 			  (int)tf->tf_a2,
 			  (int *)(&retval));
 	  break;
+#if OPT_A2
+	case SYS_fork:
+		err = sys_fork(tf, (pid_t *)*retval);
+		break;
+#endif
+
 	case SYS__exit:
 	  sys__exit((int)tf->tf_a0);
 	  /* sys__exit does not return, execution should not get here */
