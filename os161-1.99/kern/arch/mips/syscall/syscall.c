@@ -115,11 +115,9 @@ syscall(struct trapframe *tf)
 			  (int)tf->tf_a2,
 			  (int *)(&retval));
 	  break;
-#if OPT_A2
 	case SYS_fork:
-		err = sys_fork(tf, (pid_t *)*retval);
+		err = sys_fork(tf, (pid_t *)&retval);
 		break;
-#endif
 
 	case SYS__exit:
 	  sys__exit((int)tf->tf_a0);
@@ -185,5 +183,15 @@ syscall(struct trapframe *tf)
 void
 enter_forked_process(struct trapframe *tf)
 {
-	(void)tf;
+	struct trapframe otf = *tf;
+	
+
+	otf.tf_v0 = 0;
+	otf.tf_a3 = 1;
+	otf.tf_epc += 4;
+
+	kfree(tf);
+	mips_usermode(&otf);
+
+	//(void)tf;
 }

@@ -69,7 +69,7 @@ static struct semaphore *proc_count_mutex;
 struct semaphore *no_proc_sem;   
 #endif  // UW
 
-
+int pidNum = 2;
 
 /*
  * Create a proc structure.
@@ -102,6 +102,7 @@ proc_create(const char *name)
 #ifdef UW
 	proc->console = NULL;
 #endif // UW
+	proc->pid = pidNum++;
 
 	return proc;
 }

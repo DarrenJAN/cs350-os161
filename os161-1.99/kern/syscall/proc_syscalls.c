@@ -3,12 +3,19 @@
 #include <kern/unistd.h>
 #include <kern/wait.h>
 #include <lib.h>
+#include <mips/trapframe.h>
 #include <syscall.h>
 #include <current.h>
 #include <proc.h>
 #include <thread.h>
 #include <addrspace.h>
 #include <copyinout.h>
+#include <synch.h>
+#include <array.h>
+#include <limits.h>
+#include <test.h>
+#include <array.h>
+
   /* this implementation of sys__exit does not do anything with the exit code */
   /* this needs to be fixed to get exit() and waitpid() working properly */
 
@@ -83,8 +90,16 @@ int sys_fork(struct trapframe *ctf, pid_t *retval) {
     return ENOMEM;
   }
 
-  memcpy(ntf,ctf, sizeof(trapframe));
+  //newProc->pid = curProc->pid++; 
+  memcpy(ntf,ctf, sizeof(struct trapframe));
   DEBUG(DB_SYSCALL, "sys_fork: Created new trap frame\n");
+
+  int err = thread_fork(curthread->t_name, newProc, (void *)enter_forked_process, ntf, 0);
+  if(err) {
+    proc_destroy(newProc);
+    kfree(ntf);
+    return err;
+  }
   //still to add the child to parent
 
   *retval = newProc->pid;

@@ -71,6 +71,8 @@ struct proc {
 	/* add more material here as needed */
 #if OPT_A2
      pid_t pid;
+     struct array procChildren;
+     
 #endif
 };
 
