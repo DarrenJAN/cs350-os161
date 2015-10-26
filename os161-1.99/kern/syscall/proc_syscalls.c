@@ -31,11 +31,11 @@ void sys__exit(int exitcode) {
 
   KASSERT(curproc->p_addrspace != NULL);
 
-  for (unsigned int i = 0; i < array_num(&p->procChildren); ++i)
+  for (unsigned int i = array_num(&p->procChildren); i > 0; i--)
   {
-    struct proc* curc = array_get(&p->procChildren, i);
+    struct proc* curc = array_get(&p->procChildren, i-1);
     lock_release(curc->exitLock);
-    array_remove(&p->procChildren, i);
+    array_remove(&p->procChildren, i-1);
   }
 
   KASSERT(array_num(&p->procChildren) == 0);
@@ -119,6 +119,7 @@ int sys_fork(struct trapframe *ctf, pid_t *retval) {
     ntf = NULL;
     return err;
   }
+  DEBUG(DB_SYSCALL, "sys: fork created successfully\n");
   array_add(&curProc->procChildren, newProc, NULL);
 
   lock_acquire(newProc->exitLock);
@@ -165,7 +166,7 @@ sys_waitpid(pid_t pid,
   }
 
   if (options != 0) {
-    return(EINVAL);
+    return EINVAL;
   }
 
   lock_acquire(cur->waitLock);
@@ -178,9 +179,9 @@ sys_waitpid(pid_t pid,
 
   result = copyout((void *)&exitstatus,status,sizeof(int));
   if (result) {
-    return(result);
+    return result;
   }
   *retval = pid;
-  return(0);
+  return 0;
 }
 

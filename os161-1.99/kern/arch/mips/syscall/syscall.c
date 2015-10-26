@@ -31,12 +31,13 @@
 #include <kern/errno.h>
 #include <kern/syscall.h>
 #include <lib.h>
+#include <mips/specialreg.h>
 #include <mips/trapframe.h>
 #include <thread.h>
 #include <current.h>
 #include <syscall.h>
 #include "opt-A2.h" 
-
+#include <proc.h>
 /*
  * System call dispatcher.
  *
@@ -187,10 +188,15 @@ enter_forked_process(struct trapframe *tf)
 	
 
 	otf.tf_v0 = 0;
-	otf.tf_a3 = 1;
+	otf.tf_a3 = 0;
 	otf.tf_epc += 4;
 
 	kfree(tf);
+
+	KASSERT(curthread->t_curspl == 0);
+	/* ...or leak any spinlocks */
+	KASSERT(curthread->t_iplhigh_count == 0);
+
 	mips_usermode(&otf);
 
 	//(void)tf;
