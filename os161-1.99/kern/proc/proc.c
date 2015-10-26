@@ -50,7 +50,7 @@
 #include <vfs.h>
 #include <synch.h>
 #include <kern/fcntl.h>  
-
+#include <array.h>
 /*
  * The process for the kernel; this holds all the kernel-only threads.
  */
@@ -69,7 +69,60 @@ static struct semaphore *proc_count_mutex;
 struct semaphore *no_proc_sem;   
 #endif  // UW
 
-int pidNum = 2;
+pid_t pidNum = 2;
+struct array *allProcs; 
+
+pid_t genPid(void) {
+	return ++pidNum;
+}
+
+void procArrayAllProcsAddProc(struct proc *p) {
+	if (allProcs == NULL) {
+		allProcs = array_create();
+		array_init(allProcs);
+	}
+	array_add(allProcs, p, NULL);
+}
+
+
+//void addAllProcs(struct q)
+unsigned procIndex(struct array *procs, pid_t pid){
+	unsigned lo = 0;
+	unsigned hi = array_num(procs) - 1;
+
+	while(hi >= lo) {
+		unsigned find = (hi + lo)/2;
+		struct proc *cur = array_get(procs, find);
+		if(cur->pid == pid)
+			return find;
+		else if(pid < cur->pid)
+			hi = find -1;
+		else lo = find + 1;
+	}
+	return -1;
+}
+
+struct proc * getProc(struct array *procs, pid_t pid) {
+	return array_get(procs, procIndex(procs,pid));
+}
+
+struct proc * getProcFromArray(pid_t pid){
+	return getProc(allProcs, pid);
+}
+
+void removeProc(struct array *procs, pid_t pid){
+	array_remove(procs, procIndex(procs, pid));
+}
+
+void removeProcArray(pid_t pid){
+	removeProc(allProcs, pid);
+	if(array_num(allProcs) == 0) {
+		array_cleanup(allProcs);
+		array_destroy(allProcs);
+		allProcs = NULL;
+	}
+}
+
 
 /*
  * Create a proc structure.
@@ -102,10 +155,42 @@ proc_create(const char *name)
 #ifdef UW
 	proc->console = NULL;
 #endif // UW
-	proc->pid = pidNum++;
+	proc->pid = genPid();
+	proc->didExit = false;
+	proc->exitCode = 0;
 
+	proc->exitLock = lock_create("exit Lock");
+	if(proc->exitLock == NULL) {
+		kfree(proc->p_name);
+		kfree(proc);
+		return NULL;
+	}
+
+	proc->waitLock = lock_create("wait Lock");
+	if(proc->waitLock == NULL) {
+		lock_destroy(proc->exitLock);
+		kfree(proc->p_name);
+		kfree(proc);
+		return NULL;
+	}
+
+	proc->waitCV = cv_create("wait CV");
+	if(proc->waitCV == NULL) {
+		lock_destroy(proc->exitLock);
+		lock_destroy(proc->waitLock);
+		kfree(proc->p_name);
+		kfree(proc);
+		return NULL;
+	}
+
+	proc->procChildren = *array_create();
+	array_init(&proc->procChildren);
+
+	procArrayAllProcsAddProc(proc);
+	
 	return proc;
 }
+
 
 /*
  * Destroy a proc structure.
@@ -125,6 +210,7 @@ proc_destroy(struct proc *proc)
 	KASSERT(proc != NULL);
 	KASSERT(proc != kproc);
 
+	removeProcArray(proc->pid);
 	/*
 	 * We don't take p_lock in here because we must have the only
 	 * reference to this structure. (Otherwise it would be
@@ -166,6 +252,11 @@ proc_destroy(struct proc *proc)
 
 	threadarray_cleanup(&proc->p_threads);
 	spinlock_cleanup(&proc->p_lock);
+
+	array_cleanup(&proc->procChildren);
+	lock_destroy(proc->exitLock);
+	lock_destroy(proc->waitLock);
+	cv_destroy(proc->waitCV);
 
 	kfree(proc->p_name);
 	kfree(proc);
@@ -209,6 +300,12 @@ proc_bootstrap(void)
     panic("could not create no_proc_sem semaphore\n");
   }
 #endif // UW 
+  /*
+  if(allProcs == NULL) {
+  	allProcs = array_create();
+  	array_init(allProcs);
+  }
+  */
 }
 
 /*

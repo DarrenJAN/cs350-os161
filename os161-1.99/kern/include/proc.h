@@ -35,7 +35,7 @@
  *
  * Note: curproc is defined by <current.h>.
  */
-
+#include <array.h>
 #include <spinlock.h>
 #include <thread.h> /* required for struct threadarray */
 #include <opt-A2.h>
@@ -69,11 +69,16 @@ struct proc {
 #endif
 
 	/* add more material here as needed */
-#if OPT_A2
      pid_t pid;
+     bool didExit;
+     int exitCode;
+
+     struct lock *exitLock;
+     struct lock *waitLock;
+     struct cv *waitCV;
+
      struct array procChildren;
-     
-#endif
+
 };
 
 /* This is the process structure for the kernel and for kernel-only threads. */
@@ -105,5 +110,20 @@ struct addrspace *curproc_getas(void);
 /* Change the address space of the current process, and return the old one. */
 struct addrspace *curproc_setas(struct addrspace *);
 
+void procArrayAllProcsAddProc(struct proc *p);
+
+// Generates a unique process ID
+pid_t genPid(void);
+
+unsigned procIndex(struct array *pids, pid_t pid);
+
+struct proc * getProc(struct array *pids, pid_t pid);
+
+struct proc * getProcFromArray(pid_t pid);
+
+//adds to the queue
+//void addAllProcs(struct queue *addAllProcs,pid_t pid);
+void removeProc(struct array *procs, pid_t pid);
+void removeProcArray(pid_t pid);
 
 #endif /* _PROC_H_ */

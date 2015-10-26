@@ -25,11 +25,21 @@ void sys__exit(int exitcode) {
   struct proc *p = curproc;
   /* for now, just include this to keep the compiler from complaining about
      an unused variable */
-  (void)exitcode;
+
 
   DEBUG(DB_SYSCALL,"Syscall: _exit(%d)\n",exitcode);
 
   KASSERT(curproc->p_addrspace != NULL);
+
+  for (unsigned int i = 0; i < array_num(&p->procChildren); ++i)
+  {
+    struct proc* curc = array_get(&p->procChildren, i);
+    lock_release(curc->exitLock);
+    array_remove(&p->procChildren, i);
+  }
+
+  KASSERT(array_num(&p->procChildren) == 0);
+
   as_deactivate();
   /*
    * clear p_addrspace before calling as_destroy. Otherwise if
@@ -44,9 +54,17 @@ void sys__exit(int exitcode) {
   /* detach this thread from its process */
   /* note: curproc cannot be used after this call */
   proc_remthread(curthread);
+  p->didExit = true;
 
+  p->exitCode = _MKWAIT_EXIT(exitcode);
   /* if this is the last user process in the system, proc_destroy()
      will wake up the kernel menu thread */
+
+  cv_broadcast(p->waitCV, p->waitLock);
+
+  lock_acquire(p->exitLock);
+  lock_release(p->exitLock);
+
   proc_destroy(p);
   
   thread_exit();
@@ -98,9 +116,12 @@ int sys_fork(struct trapframe *ctf, pid_t *retval) {
   if(err) {
     proc_destroy(newProc);
     kfree(ntf);
+    ntf = NULL;
     return err;
   }
-  //still to add the child to parent
+  array_add(&curProc->procChildren, newProc, NULL);
+
+  lock_acquire(newProc->exitLock);
 
   *retval = newProc->pid;
   return 0;
@@ -124,6 +145,8 @@ sys_waitpid(pid_t pid,
   int exitstatus;
   int result;
 
+  struct proc *cur = getProcFromArray(pid);
+
   /* this is just a stub implementation that always reports an
      exit status of 0, regardless of the actual exit status of
      the specified process.   
@@ -133,11 +156,26 @@ sys_waitpid(pid_t pid,
      Fix this!
   */
 
+  if(cur == NULL) {
+    return ESRCH;
+  }
+
+  if(cur == curproc){
+    return ECHILD;
+  }
+
   if (options != 0) {
     return(EINVAL);
   }
+
+  lock_acquire(cur->waitLock);
+  while(!cur->didExit)
+    cv_wait(cur->waitCV,cur->waitLock);
+  lock_release(cur->waitLock);
+
   /* for now, just pretend the exitstatus is 0 */
-  exitstatus = 0;
+  exitstatus = cur->exitCode;
+
   result = copyout((void *)&exitstatus,status,sizeof(int));
   if (result) {
     return(result);
