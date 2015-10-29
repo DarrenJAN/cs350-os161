@@ -21,25 +21,41 @@
 
 void sys__exit(int exitcode) {
 
+  lock_acquire(procTableLock);
+  struct procTable *pt1 = getPT(curproc->pid);
+
+  if (pt1->ppid != PROC_NO_PID) {
+    pt1->state = PROC_ZOMBIE;
+    pt1->exitCode = _MKWAIT_EXIT(exitcode);
+    cv_broadcast(waitCV, procTableLock);
+  }
+  else {
+    pt1->state = PROC_EXITED;
+    array_add(reusePIDs, &pt1->pid, NULL);
+  }
+  for (unsigned int i = 0; i < array_num(allProcs); i++)
+  {
+    struct procTable *cur = array_get(allProcs,i);
+    if((cur->ppid == pt1->pid) && (cur->state == PROC_ZOMBIE)) {
+      cur->state = PROC_EXITED;
+      cur->ppid = PROC_NO_PID;
+      array_add(reusePIDs, &cur->pid, NULL);
+    }
+  }
+
+  lock_release(procTableLock);
+
+
+
   struct addrspace *as;
   struct proc *p = curproc;
   /* for now, just include this to keep the compiler from complaining about
      an unused variable */
-
+  (void)exitcode;
 
   DEBUG(DB_SYSCALL,"Syscall: _exit(%d)\n",exitcode);
 
   KASSERT(curproc->p_addrspace != NULL);
-
-  for (unsigned int i = array_num(&p->procChildren); i > 0; i--)
-  {
-    struct proc* curc = array_get(&p->procChildren, i-1);
-    lock_release(curc->exitLock);
-    array_remove(&p->procChildren, i-1);
-  }
-
-  KASSERT(array_num(&p->procChildren) == 0);
-
   as_deactivate();
   /*
    * clear p_addrspace before calling as_destroy. Otherwise if
@@ -54,22 +70,34 @@ void sys__exit(int exitcode) {
   /* detach this thread from its process */
   /* note: curproc cannot be used after this call */
   proc_remthread(curthread);
-  p->didExit = true;
 
-  p->exitCode = _MKWAIT_EXIT(exitcode);
   /* if this is the last user process in the system, proc_destroy()
      will wake up the kernel menu thread */
-
-  cv_broadcast(p->waitCV, p->waitLock);
-
-  lock_acquire(p->exitLock);
-  lock_release(p->exitLock);
-
   proc_destroy(p);
   
   thread_exit();
   /* thread_exit() does not return, so we should never get here */
   panic("return from thread_exit in sys_exit\n");
+
+  /*
+  struct addrspace *as;
+  struct proc *p = curproc;
+
+  DEBUG(DB_SYSCALL,"Syscall: _exit(%d)\n",exitcode);
+
+  KASSERT(curproc->p_addrspace != NULL);
+  as_deactivate();
+  as = curproc_setas(NULL);
+  as_destroy(as);
+  proc_remthread(curthread);
+
+  lock_acquire(procTableLock);
+  procExitProcess(p, exitcode);
+  lock_release(procTableLock);
+  thread_exit();
+  panic("return from thread_exit in sys_exit\n");
+  */
+
 }
 
 /*
@@ -82,6 +110,9 @@ child Prod returns value via enter_forked_process
 int sys_fork(struct trapframe *ctf, pid_t *retval) {
   struct proc *curProc = curproc;
   struct proc *newProc = proc_create_runprogram(curProc->p_name);
+
+  struct procTable *pt1 = getPT(newProc->pid);
+  pt1->ppid = curProc->pid;
 
   if(newProc == NULL) {
     DEBUG(DB_SYSCALL, "sys_fork_error: Wasn't able to make new process.\n");
@@ -112,7 +143,7 @@ int sys_fork(struct trapframe *ctf, pid_t *retval) {
   memcpy(ntf,ctf, sizeof(struct trapframe));
   DEBUG(DB_SYSCALL, "sys_fork: Created new trap frame\n");
 
-  int err = thread_fork(curthread->t_name, newProc, (void *)enter_forked_process, ntf, 0);
+  int err = thread_fork(curthread->t_name, newProc, &enter_forked_process, ntf, 1);
   if(err) {
     proc_destroy(newProc);
     kfree(ntf);
@@ -120,9 +151,8 @@ int sys_fork(struct trapframe *ctf, pid_t *retval) {
     return err;
   }
   DEBUG(DB_SYSCALL, "sys: fork created successfully\n");
-  array_add(&curProc->procChildren, newProc, NULL);
 
-  lock_acquire(newProc->exitLock);
+  //array_add(&curProc->procChildren, newProc, NULL);
 
   *retval = newProc->pid;
   return 0;
@@ -143,45 +173,85 @@ sys_waitpid(pid_t pid,
 	    int options,
 	    pid_t *retval)
 {
-  int exitstatus;
-  int result;
 
-  struct proc *cur = getProcFromArray(pid);
+    int exitstatus;
+    int result = 0;
+  lock_acquire(procTableLock);
+  struct procTable *pt1 = getPT(pid);
+  
 
-  /* this is just a stub implementation that always reports an
-     exit status of 0, regardless of the actual exit status of
-     the specified process.   
-     In fact, this will return 0 even if the specified process
-     is still running, and even if it never existed in the first place.
-
-     Fix this!
-  */
-
-  if(cur == NULL) {
-    return ESRCH;
+  struct proc *parent = curproc;
+  
+  if(pt1 == NULL) {
+    result = ESRCH;
+  }
+  else if(parent->pid != pt1->ppid) {
+    result = ECHILD;
   }
 
-  if(cur == curproc){
-    return ECHILD;
+  if(result){
+    lock_release(procTableLock);
+    return(result);
   }
 
   if (options != 0) {
-    return EINVAL;
+    return(EINVAL);
   }
 
-  lock_acquire(cur->waitLock);
-  while(!cur->didExit)
-    cv_wait(cur->waitCV,cur->waitLock);
-  lock_release(cur->waitLock);
+
+  while(pt1->state == PROC_RUNNING) {
+    cv_wait(waitCV, procTableLock);
+  }
 
   /* for now, just pretend the exitstatus is 0 */
-  exitstatus = cur->exitCode;
+  exitstatus = pt1->exitCode;
+  lock_release(procTableLock);
+  result = copyout((void *)&exitstatus,status,sizeof(int));
+  if (result) {
+    return(result);
+  }
+  *retval = pid;
+  return(0);
+
+
+  /*
+  int exitstatus = 0;
+  int result = 0;
+
+  if (options != 0) {
+    return(EINVAL);
+  }
+  kprintf("lock acquired in waitpid\n");
+  lock_acquire(procTableLock);
+  struct proc *parent = curproc;
+  struct proc *child = getProcFromArray(pid);
+
+  if(child == NULL)
+    result = ESRCH;
+  else if (child->parent->pid != (parent->pid))
+    result = ECHILD;
+
+  if(result) {
+    lock_release(procTableLock);
+    kprintf("lock released in waitpid due to error\n");
+
+    return (result);
+  }
+
+  while(child->state == PROC_RUNNING)
+    cv_wait(waitCV,procTableLock);
+
+  exitstatus = child->exitCode;
+
+  lock_release(procTableLock);
+  kprintf("lock released in waitpid\n");
 
   result = copyout((void *)&exitstatus,status,sizeof(int));
   if (result) {
-    return result;
+    return(result);
   }
   *retval = pid;
-  return 0;
+  return(0);
+  */
 }
 

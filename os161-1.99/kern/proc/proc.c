@@ -51,6 +51,7 @@
 #include <synch.h>
 #include <kern/fcntl.h>  
 #include <array.h>
+#include <kern/wait.h>
 /*
  * The process for the kernel; this holds all the kernel-only threads.
  */
@@ -70,10 +71,15 @@ struct semaphore *no_proc_sem;
 #endif  // UW
 
 pid_t pidNum = 2;
-struct array *allProcs; 
 
 pid_t genPid(void) {
-	return ++pidNum;
+	if(array_num(reusePIDs) == 0){
+		return ++pidNum;	
+	}
+	else{
+		pid_t *r = array_get(reusePIDs, 0);
+		return *r; 
+	}
 }
 
 void procArrayAllProcsAddProc(struct proc *p) {
@@ -92,7 +98,7 @@ unsigned procIndex(struct array *procs, pid_t pid){
 
 	while(hi >= lo) {
 		unsigned find = (hi + lo)/2;
-		struct proc *cur = array_get(procs, find);
+		struct procTable *cur = array_get(procs, find);
 		if(cur->pid == pid)
 			return find;
 		else if(pid < cur->pid)
@@ -100,6 +106,19 @@ unsigned procIndex(struct array *procs, pid_t pid){
 		else lo = find + 1;
 	}
 	return -1;
+}
+
+struct procTable *getPT(pid_t pid) {
+	unsigned len = array_num(allProcs);
+	struct procTable *cur = NULL; 
+	for (unsigned int i = 0; i < len; i++)
+	{
+		cur = array_get(allProcs, i);
+		if(cur->pid == pid){
+			break;
+		}
+	}
+	return cur;
 }
 
 struct proc * getProc(struct array *procs, pid_t pid) {
@@ -122,8 +141,58 @@ void removeProcArray(pid_t pid){
 		allProcs = NULL;
 	}
 }
+/*
+void procExitProcess(struct proc *exitProc, int exitCode){
+	KASSERT(exitProc != NULL);
+	KASSERT(exitProc->pid > 0);
+	kprintf("entered proc exit Process \n");
+	exitProc->state = PROC_EXITED;
+	exitProc->exitCode = _MKWAIT_EXIT(exitCode);
+	int exitPID = exitProc->pid;
 
+	for(unsigned int i = 0; i < array_num(allProcs); i++) {
+		struct proc *cur = array_get(allProcs, i);
+		if(cur->parent != NULL) {
+			if (cur != NULL && exitProc->pid == cur->parent->pid)
+			{
+				int curState = cur->state;
+				if(curState == PROC_RUNNING)
+					cur->parent->pid = PROC_NO_PID;
+				else if(curState == PROC_EXITED) {
+					removeProcArray(cur->pid);
+					kprintf("called proc destroy in for loop \n");
+				
+					proc_destroy(cur);
+				}
+			}
+		}	
+	}
+	for (unsigned int i = array_num(&exitProc->procChildren); i > 0; i--)
+	{
+		struct proc *cur = array_get(&exitProc->procChildren, i-1);
+		int curState = cur->state;
+		if(curState == PROC_RUNNING)
+			cur->state = PROC_NO_PID;
+		else if(curState == PROC_EXITED) {
+			array_remove(&exitProc->procChildren, i-1);
+			removeProcArray(cur->pid);
 
+			kprintf("called proc destroy in for loop \n");
+			proc_destroy(cur);
+		}
+	}
+	
+	if(exitProc->parent != NULL) {
+		if(exitProc->parent->pid == PROC_NO_PID){				
+			removeProcArray(exitPID);
+			kprintf("called proc destroy outside for loop \n");
+			proc_destroy(exitProc);
+		}
+		else cv_broadcast(waitCV, procTableLock);	
+	}
+	
+}
+*/
 /*
  * Create a proc structure.
  */
@@ -155,39 +224,9 @@ proc_create(const char *name)
 #ifdef UW
 	proc->console = NULL;
 #endif // UW
-	proc->pid = genPid();
-	proc->didExit = false;
-	proc->exitCode = 0;
-
-	proc->exitLock = lock_create("exit Lock");
-	if(proc->exitLock == NULL) {
-		kfree(proc->p_name);
-		kfree(proc);
-		return NULL;
-	}
-
-	proc->waitLock = lock_create("wait Lock");
-	if(proc->waitLock == NULL) {
-		lock_destroy(proc->exitLock);
-		kfree(proc->p_name);
-		kfree(proc);
-		return NULL;
-	}
-
-	proc->waitCV = cv_create("wait CV");
-	if(proc->waitCV == NULL) {
-		lock_destroy(proc->exitLock);
-		lock_destroy(proc->waitLock);
-		kfree(proc->p_name);
-		kfree(proc);
-		return NULL;
-	}
-
-	proc->procChildren = *array_create();
-	array_init(&proc->procChildren);
-
-	procArrayAllProcsAddProc(proc);
 	
+	/*
+	*/
 	return proc;
 }
 
@@ -210,7 +249,7 @@ proc_destroy(struct proc *proc)
 	KASSERT(proc != NULL);
 	KASSERT(proc != kproc);
 
-	removeProcArray(proc->pid);
+	//removeProcArray(proc->pid);
 	/*
 	 * We don't take p_lock in here because we must have the only
 	 * reference to this structure. (Otherwise it would be
@@ -252,12 +291,7 @@ proc_destroy(struct proc *proc)
 
 	threadarray_cleanup(&proc->p_threads);
 	spinlock_cleanup(&proc->p_lock);
-
-	array_cleanup(&proc->procChildren);
-	lock_destroy(proc->exitLock);
-	lock_destroy(proc->waitLock);
-	cv_destroy(proc->waitCV);
-
+	//array_destroy(&proc->procChildren);
 	kfree(proc->p_name);
 	kfree(proc);
 
@@ -300,12 +334,17 @@ proc_bootstrap(void)
     panic("could not create no_proc_sem semaphore\n");
   }
 #endif // UW 
-  /*
-  if(allProcs == NULL) {
-  	allProcs = array_create();
-  	array_init(allProcs);
-  }
-  */
+  procTableLock = lock_create("Proc Table Lock");
+  pidLock = lock_create("pid lock");
+  waitCV = cv_create("wait cv");
+  if(procTableLock == NULL) 
+  	panic("couldn't create lock");
+	
+  allProcs = array_create();
+  array_init(allProcs);
+
+  reusePIDs = array_create();
+  array_init(reusePIDs);
 }
 
 /*
@@ -325,6 +364,21 @@ proc_create_runprogram(const char *name)
 		return NULL;
 	}
 
+	struct procTable *p = kmalloc(sizeof(struct procTable));
+
+
+	lock_acquire(pidLock);
+	proc->pid = genPid();
+	lock_release(pidLock);
+
+	p->pid = proc->pid;
+	p->ppid = PROC_NO_PID;
+	p->exitCode = 0;
+	p->state = PROC_RUNNING; 
+
+	lock_acquire(procTableLock);
+	array_add(allProcs, p, NULL);
+	lock_release(procTableLock);
 #ifdef UW
 	/* open the console - this should always succeed */
 	console_path = kstrdup("con:");

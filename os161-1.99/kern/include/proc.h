@@ -45,6 +45,13 @@ struct vnode;
 struct semaphore;
 #endif // UW
 
+
+#define PROC_EXITED 0
+#define PROC_RUNNING 1
+#define PROC_NO_PID -1
+#define PROC_ZOMBIE 2
+
+
 /*
  * Process structure.
  */
@@ -70,16 +77,16 @@ struct proc {
 
 	/* add more material here as needed */
      pid_t pid;
-     bool didExit;
-     int exitCode;
+};
 
-     struct lock *exitLock;
-     struct lock *waitLock;
-     struct cv *waitCV;
-
-     struct array procChildren;
+struct procTable {
+	pid_t pid;
+	pid_t ppid;
+	int state;
+    int exitCode;
 
 };
+
 
 /* This is the process structure for the kernel and for kernel-only threads. */
 extern struct proc *kproc;
@@ -126,4 +133,12 @@ struct proc * getProcFromArray(pid_t pid);
 void removeProc(struct array *procs, pid_t pid);
 void removeProcArray(pid_t pid);
 
+void procExitProcess(struct proc *exitProc, int exitCode);
+struct procTable *getPT(pid_t pid);
+
+struct array *allProcs; 
+struct lock *procTableLock;
+struct cv *waitCV;
+struct lock *pidLock;
+struct array *reusePIDs;
 #endif /* _PROC_H_ */
