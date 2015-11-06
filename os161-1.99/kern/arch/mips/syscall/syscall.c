@@ -134,6 +134,9 @@ syscall(struct trapframe *tf)
 			    (int)tf->tf_a2,
 			    (pid_t *)&retval);
 	  break;
+	case SYS_execv:
+		err = sys_execv((char *)tf->tf_a0, (userptr_t) tf->tf_a1);
+		break;
 #endif // UW
 
 	    /* Add stuff here */

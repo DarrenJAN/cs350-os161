@@ -206,11 +206,11 @@ lock_acquire(struct lock *lock)
             spinlock_acquire(&lock->lk_lock);   
         }
 
-                KASSERT(lock->lk_count == 1);
-                lock->lk_thread = curthread;
-                lock->lk_count -= 1;
-                spinlock_release(&lock->lk_lock);
-                return;
+        KASSERT(lock->lk_count == 1);
+        lock->lk_thread = curthread;
+        lock->lk_count -= 1;
+        spinlock_release(&lock->lk_lock);
+        return;
         //(void)lock;  // suppress warning until code gets written
 }
 
