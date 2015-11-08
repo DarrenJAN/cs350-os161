@@ -44,6 +44,9 @@
 #include <vfs.h>
 #include <syscall.h>
 #include <test.h>
+#include <copyinout.h>
+#include <opt-A2.h>
+#include <limits.h>
 
 /*
  * Load program "progname" and start running it in usermode.
@@ -52,12 +55,21 @@
  * Calls vfs_open on progname and thus may destroy it.
  */
 int
-runprogram(char *progname)
+runprogram(char *progname, char** args)
 {
 	struct addrspace *as;
 	struct vnode *v;
 	vaddr_t entrypoint, stackptr;
 	int result;
+	int argc = 0;
+
+	#if OPT_A2
+	while(args[argc] != NULL) {
+	    argc++;
+	}
+	#endif
+
+
 
 	/* Open the file. */
 	result = vfs_open(progname, O_RDONLY, 0, &v);
@@ -97,8 +109,36 @@ runprogram(char *progname)
 		return result;
 	}
 
+	#if OPT_A2
+
+	while(stackptr %8 != 0)
+		stackptr--;
+
+	vaddr_t argptr[argc + 1];
+	for (int i = argc - 1; i >= 0; i--)
+	{
+		stackptr -= strlen(args[i]) + 1;
+		result = copyoutstr(args[i], (userptr_t) stackptr, strlen(args[i]) + 1, NULL);
+		if(result)
+			return result;
+		argptr[i] = stackptr;
+	}
+
+	while(stackptr % 4 != 0)
+		stackptr--;
+
+	argptr[argc] = 0;
+
+	for (int i = argc; i >= 0; i--)
+	{
+		stackptr -= ROUNDUP(sizeof(vaddr_t), 4);
+		result = copyout(&argptr[i], (userptr_t) stackptr, sizeof(vaddr_t));
+		if(result)
+			return result;
+	}
+	#endif
 	/* Warp to user mode. */
-	enter_new_process(0 /*argc*/, NULL /*userspace addr of argv*/,
+	enter_new_process(argc /*argc*/, (userptr_t) stackptr /*userspace addr of argv*/,
 			  stackptr, entrypoint);
 	
 	/* enter_new_process does not return. */

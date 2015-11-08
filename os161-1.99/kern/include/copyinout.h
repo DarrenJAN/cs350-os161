@@ -70,4 +70,18 @@ int copyinstr(const_userptr_t usersrc, char *dest, size_t len, size_t *got);
 int copyoutstr(const char *src, userptr_t userdest, size_t len, size_t *got);
 
 
+struct argsCopy {
+	size_t stroffset; // num of bytes used in char* args
+	size_t numArgs;   // num of args in char* array
+	size_t* argv;	// array of offsets
+	char* strbuf;	// data for char* args copied from user space
+	size_t argLim;	// curr num of args limit ->  initially 5
+	size_t dataLim;	// current copy data size limit, initially 32 bytes
+};
+
+
+//copy args stuff
+struct argsCopy* argsCopyCreate(void);
+void argsCopyDestroy(struct argsCopy *argsCopy);
+
 #endif /* _COPYINOUT_H_ */

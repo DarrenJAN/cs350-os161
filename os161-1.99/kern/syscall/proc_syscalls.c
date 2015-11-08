@@ -196,17 +196,49 @@ sys_waitpid(pid_t pid,
   return(0);
 }
 
-int sys_execv(char *progname, userptr_t args){
+int sys_execv(char * progname, char ** args){
   //runprogram.c 
   if(progname == NULL)
     return EFAULT;
-
-  (void) args;
+  int argc = 0;
+  //(void) args;
   struct addrspace *as;
   struct addrspace *newas;
   struct vnode *v;
   vaddr_t entrypoint, stackptr;
   int result;
+
+  // save program on heap
+  size_t programLen = strlen(progname) + 1;
+  char *newProgram = kmalloc(sizeof(char *) * programLen);
+  result = copyinstr((userptr_t)progname, newProgram, programLen, NULL);
+  
+  if(newProgram == NULL)
+    return (ENOMEM);
+
+  if(result)
+    return result;
+
+  while(args[argc] != NULL){
+    if(strlen(args[argc]) > 1024)
+      return (E2BIG);
+    argc++;
+  }
+
+  if(argc > 64)
+    return E2BIG;
+
+
+  char **newArgs = kmalloc((argc + 1) * sizeof(char));
+  for (int i = 0; i < argc; i++)
+  {
+    newArgs[i] = kmalloc((strlen(args[i]) + 1) * sizeof(char));
+    result = copyinstr((userptr_t) args[i], newArgs[i], strlen(args[i]) + 1, NULL);
+    if(result)
+      return result;
+  }
+
+  newArgs[argc] = NULL;
 
   /* Open the file. */
   char *progn;
@@ -226,7 +258,7 @@ int sys_execv(char *progname, userptr_t args){
   }
 
   /* Switch to it and activate it. */
-  as = curproc_setas(newas);
+  curproc_setas(newas);
   as_activate();
 
   /* Load the executable. */
@@ -249,10 +281,36 @@ int sys_execv(char *progname, userptr_t args){
     return result;
   }
 
+  while((stackptr % 8) != 0)
+    stackptr--;
+
+  vaddr_t argptr[argc + 1];
+  for (int i = argc - 1; i >= 0; i--)
+  {
+    stackptr -= strlen(newArgs[i]) + 1;
+    result = copyoutstr(newArgs[i], (userptr_t)stackptr, strlen(newArgs[i]) + 1, NULL);
+    if(result)
+      return result;
+    argptr[i] = stackptr;
+  }
+
+  while((stackptr % 4) != 0)
+    stackptr--;
+
+  argptr[argc]=0;
+
+  for (int i = argc; i >= 0; i--)
+  {
+    stackptr -= ROUNDUP(sizeof(vaddr_t), 4);
+    result = copyout(&argptr[i], (userptr_t)stackptr, sizeof(vaddr_t));
+    if(result)
+      return result;
+  }
+
   as_destroy(as);
 
   /* Warp to user mode. */
-  enter_new_process(0 /*argc*/, NULL /*userspace addr of argv*/,
+  enter_new_process(argc /*argc*/, (userptr_t) stackptr /*userspace addr of argv*/,
         stackptr, entrypoint);
   
   /* enter_new_process does not return. */

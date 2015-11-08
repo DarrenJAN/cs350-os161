@@ -319,3 +319,24 @@ copyoutstr(const char *src, userptr_t userdest, size_t len, size_t *actual)
 	curthread->t_machdep.tm_badfaultfunc = NULL;
 	return result;
 }
+
+
+struct argsCopy* argsCopyCreate(void) {
+	struct argsCopy *ret = kmalloc(sizeof(struct argsCopy));
+
+	ret->argLim = 4; //max arg size
+	ret->dataLim = 32; //4 * 8bytes
+	ret->numArgs = 0; // 0 copied initially
+	ret->stroffset = 0; 
+	ret->strbuf = kmalloc(ret->dataLim); 
+	ret->argv = kmalloc(sizeof(size_t) * ret->argLim);
+	return ret;
+}
+
+void argsCopyDestroy(struct argsCopy *argsCopy){
+	KASSERT(argsCopy != NULL);
+	kfree(argsCopy->argv);
+	kfree(argsCopy->strbuf);
+	kfree(argsCopy);
+}
+
