@@ -94,7 +94,7 @@ cmd_progthread(void *ptr, unsigned long nargs)
 	KASSERT(nargs >= 1);
 
 	if (nargs > 2) {
-		kprintf("Warning: argument passing from menu not supported\n");
+		//kprintf("Warning: argument passing from menu not supported\n");
 	}
 
 	/* Hope we fit. */
