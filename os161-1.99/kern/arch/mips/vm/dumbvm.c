@@ -121,7 +121,8 @@ vm_fault(int faulttype, vaddr_t faultaddress)
 	switch (faulttype) {
 	    case VM_FAULT_READONLY:
 		/* We always create pages read-write, so we can't get this */
-		panic("dumbvm: got VM_FAULT_READONLY\n");
+		return 1;
+		//panic("dumbvm: got VM_FAULT_READONLY\n");
 	    case VM_FAULT_READ:
 	    case VM_FAULT_WRITE:
 		break;
@@ -194,6 +195,10 @@ vm_fault(int faulttype, vaddr_t faultaddress)
 		}
 		ehi = faultaddress;
 		elo = paddr | TLBLO_DIRTY | TLBLO_VALID;
+		
+		if((as->complete == 1) && (faultaddress >= vbase1 && faultaddress < vtop1)) {
+			elo &= ~TLBLO_DIRTY;
+		}
 		DEBUG(DB_VM, "dumbvm: 0x%x -> 0x%x\n", faultaddress, paddr);
 		tlb_write(ehi, elo, i);
 		splx(spl);
@@ -203,6 +208,10 @@ vm_fault(int faulttype, vaddr_t faultaddress)
 	//kprintf("dumbvm: Ran out of TLB entries - cannot handle page fault\n");
 	ehi = faultaddress;
 	elo = paddr | TLBLO_DIRTY | TLBLO_VALID;
+	
+	if((as->complete == 1) && (faultaddress >= vbase1 && faultaddress < vtop1)){
+		elo &= ~TLBLO_DIRTY;
+	}
 	tlb_random(ehi, elo);	
 	splx(spl);
 	return 0;
@@ -224,7 +233,7 @@ as_create(void)
 	as->as_pbase2 = 0;
 	as->as_npages2 = 0;
 	as->as_stackpbase = 0;
-
+	as->complete = 0;
 	return as;
 }
 

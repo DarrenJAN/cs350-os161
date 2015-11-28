@@ -19,14 +19,19 @@
   /* this implementation of sys__exit does not do anything with the exit code */
   /* this needs to be fixed to get exit() and waitpid() working properly */
 
-void sys__exit(int exitcode) {
+void sys__exit(int exitcode, bool safe) {
 
   lock_acquire(procTableLock);
   struct procTable *pt1 = getPT(curproc->pid);
 
   if (pt1->ppid != PROC_NO_PID) {
     pt1->state = PROC_ZOMBIE;
-    pt1->exitCode = _MKWAIT_EXIT(exitcode);
+    if(safe){
+     pt1->exitCode = _MKWAIT_EXIT(exitcode);  
+    }
+    else {
+      pt1->exitCode = _MKWAIT_SIG(exitcode);
+    }
     cv_broadcast(waitCV, procTableLock);
   }
   else {

@@ -121,7 +121,7 @@ syscall(struct trapframe *tf)
 		break;
 
 	case SYS__exit:
-	  sys__exit((int)tf->tf_a0);
+	  sys__exit((int)tf->tf_a0, true);
 	  /* sys__exit does not return, execution should not get here */
 	  panic("unexpected return from sys__exit");
 	  break;

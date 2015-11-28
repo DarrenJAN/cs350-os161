@@ -40,7 +40,6 @@
 #include <mainbus.h>
 #include <syscall.h>
 
-
 /* in exception.S */
 extern void asm_usermode(struct trapframe *tf);
 
@@ -86,6 +85,8 @@ kill_curthread(vaddr_t epc, unsigned code, vaddr_t vaddr)
 		sig = SIGABRT;
 		break;
 	    case EX_MOD:
+	    sig = SIGSEGV;
+	    sys__exit(sig,false);
 	    case EX_TLBL:
 	    case EX_TLBS:
 		sig = SIGSEGV;
