@@ -51,10 +51,46 @@
  */
 static struct spinlock stealmem_lock = SPINLOCK_INITIALIZER;
 
+bool coreMade = false;
+
+struct coremap {
+	paddr_t addr;
+	bool inUse;
+	bool contiguous;
+};
+
+struct coremap *coremap;
+
+int totalFrames;
+
 void
 vm_bootstrap(void)
 {
-	/* Do nothing. */
+	#if OPT_A3
+	paddr_t lo;
+	paddr_t hi;
+	ram_getsize(&lo, &hi);
+
+	coremap = (struct coremap *) PADDR_TO_KVADDR(lo);
+	//assume #of frames without coremap initially
+	int frames = (hi - lo)/PAGE_SIZE;
+	//use it to find necessary space for coremap
+	lo += frames*(sizeof(struct coremap));
+	while(lo%PAGE_SIZE != 0)
+		lo+=1;
+	frames = (hi - lo)/PAGE_SIZE;
+	totalFrames = frames;
+
+	paddr_t curLo = lo;
+	for (int i = 0; i < frames; ++i)
+	{
+		coremap[i].addr = curLo;
+		coremap[i].inUse = false;
+		coremap[i].contiguous = false;
+		curLo += PAGE_SIZE;
+	}
+	coreMade = true;
+	#endif
 }
 
 static
@@ -64,9 +100,62 @@ getppages(unsigned long npages)
 	paddr_t addr;
 
 	spinlock_acquire(&stealmem_lock);
+	#if OPT_A3
 
-	addr = ram_stealmem(npages);
-	
+	if(coreMade) {
+		int pages = (int) npages;
+		bool areaFound = false;
+		int start;
+		for (int i = 0; i < totalFrames; ++i)
+		{
+			if(areaFound)
+				break;
+			if(!coremap[i].inUse){
+				int currentCount = 1;
+				if(pages > 1){ //contiguous block check
+					for (int j = i + 1; j < i + pages; ++j)
+					{
+						if(!coremap[j].inUse){
+							currentCount++;
+							if(currentCount == pages){
+								areaFound = true;
+								start = i;
+							}
+						}
+						else{
+							i += currentCount;
+							break;
+						}
+					}
+				}
+				else{
+					start = i;
+					areaFound = true;
+				}
+			}
+		}
+		if(areaFound){
+			for (int i = 0; i < pages; ++i)
+			{
+				coremap[start + i].inUse =  true;
+				if(i == pages-1){
+					coremap[start+i].contiguous= false;
+				}
+				else
+					coremap[start+i].contiguous=true;
+			}
+			addr = coremap[start].addr;
+		}
+		else{
+			spinlock_release(&stealmem_lock);
+			kprintf("out of memory allocating frames\n");
+			return ENOMEM;
+		}
+	}
+	else{
+		addr = ram_stealmem(npages);	
+	}
+	#endif
 	spinlock_release(&stealmem_lock);
 	return addr;
 }
@@ -80,6 +169,9 @@ alloc_kpages(int npages)
 	if (pa==0) {
 		return 0;
 	}
+	if(pa==ENOMEM)
+		return ENOMEM;
+
 	return PADDR_TO_KVADDR(pa);
 }
 
@@ -87,8 +179,30 @@ void
 free_kpages(vaddr_t addr)
 {
 	/* nothing - leak the memory. */
-
-	(void)addr;
+	#if OPT_A3
+	spinlock_acquire(&stealmem_lock);
+	if(coreMade){
+		if(!addr){
+			spinlock_release(&stealmem_lock);
+			kprintf("freeing error");
+			return;
+		}
+		bool found = false;
+		for (int i = 0; i < totalFrames; ++i)
+		{
+			if(coremap[i].addr == addr)
+				found = true;
+			if(found){
+				coremap[i].inUse = false;
+				if(!coremap[i].contiguous)
+					break;
+			}
+		}
+	}
+	spinlock_release(&stealmem_lock);
+	#endif
+	return;
+	//(void)addr;
 }
 
 void
@@ -113,6 +227,7 @@ vm_fault(int faulttype, vaddr_t faultaddress)
 	uint32_t ehi, elo;
 	struct addrspace *as;
 	int spl;
+	bool insideText = false;
 
 	faultaddress &= PAGE_FRAME;
 
@@ -171,6 +286,7 @@ vm_fault(int faulttype, vaddr_t faultaddress)
 
 	if (faultaddress >= vbase1 && faultaddress < vtop1) {
 		paddr = (faultaddress - vbase1) + as->as_pbase1;
+		insideText = true;
 	}
 	else if (faultaddress >= vbase2 && faultaddress < vtop2) {
 		paddr = (faultaddress - vbase2) + as->as_pbase2;
@@ -240,6 +356,9 @@ as_create(void)
 void
 as_destroy(struct addrspace *as)
 {
+	free_kpages(as->as_pbase1);
+	free_kpages(as->as_pbase2);
+	free_kpages(as->as_stackpbase);
 	kfree(as);
 }
 
@@ -287,12 +406,30 @@ as_define_region(struct addrspace *as, vaddr_t vaddr, size_t sz,
 	sz = (sz + PAGE_SIZE - 1) & PAGE_FRAME;
 
 	npages = sz / PAGE_SIZE;
+	#if OPT_A3
+	if(readable)
+		as->as_readable = 1;
+	else
+		as->as_readable = 0;
+
+	if(writeable)
+		as->as_writable = 1;
+	else
+		as->as_writable = 0;
+
+	if(executable)
+		as->as_executable = 1;
+	else
+		as->as_executable = 0;
+	#else
+
 
 	/* We don't use these - all pages are read-write */
-	(void)readable;
-	(void)writeable;
-	(void)executable;
+		(void)readable;
+		(void)writeable;
+		(void)executable;
 
+	#endif
 	if (as->as_vbase1 == 0) {
 		as->as_vbase1 = vaddr;
 		as->as_npages1 = npages;
