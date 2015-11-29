@@ -294,6 +294,8 @@ proc_destroy(struct proc *proc)
 	//array_destroy(&proc->procChildren);
 	kfree(proc->p_name);
 	kfree(proc);
+	//kfree(procTable);
+
 
 #ifdef UW
 	/* decrement the process count */

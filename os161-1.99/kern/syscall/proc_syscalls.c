@@ -138,7 +138,7 @@ int sys_fork(struct trapframe *ctf, pid_t *retval) {
     return err;
   }
   DEBUG(DB_SYSCALL, "sys: fork created successfully\n");
-
+  //kfree(ntf);
   //array_add(&curProc->procChildren, newProc, NULL);
 
   *retval = newProc->pid;
@@ -314,6 +314,8 @@ int sys_execv(char * progname, char ** args){
 
   as_destroy(as);
 
+  //kfree(newArgs);
+  //kfree(newProgram);
   /* Warp to user mode. */
   enter_new_process(argc /*argc*/, (userptr_t) stackptr /*userspace addr of argv*/,
         stackptr, entrypoint);
