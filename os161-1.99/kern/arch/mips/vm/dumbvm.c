@@ -98,7 +98,7 @@ paddr_t
 getppages(unsigned long npages)
 {
 	paddr_t addr;
-
+	(void) npages;
 	spinlock_acquire(&stealmem_lock);
 	#if OPT_A3
 
@@ -178,6 +178,7 @@ alloc_kpages(int npages)
 void 
 free_kpages(vaddr_t addr)
 {
+	(void) addr;
 	/* nothing - leak the memory. */
 	#if OPT_A3
 	spinlock_acquire(&stealmem_lock);
