@@ -63,11 +63,9 @@ runprogram(char *progname, char** args, size_t nargs)
 	int result;
 	int argc = 0;
 
-	#if OPT_A2
 	while(args[argc] != NULL) {
 	    argc++;
 	}
-	#endif
 
 
 
